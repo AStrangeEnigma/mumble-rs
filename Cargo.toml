@@ -1,0 +1,10 @@
+[package]
+name = "mumble"
+version = "0.1.0"
+authors = ["Richard McCormack <brick@brick.codes>"]
+
+[dependencies]
+clippy = "*"
+openssl = "0.8.3"
+protobuf = "1.0.24"
+
