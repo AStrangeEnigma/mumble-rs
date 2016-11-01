@@ -7,4 +7,3 @@ authors = ["Richard McCormack <brick@brick.codes>"]
 clippy = "*"
 openssl = "0.8.3"
 protobuf = "1.0.24"
-
