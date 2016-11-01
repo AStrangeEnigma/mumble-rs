@@ -13,17 +13,18 @@ use openssl::ssl::HandshakeError;
 pub const DEFAULT_PORT: u16 = 64738;
 const SSL_HANDSHAKE_RETRIES: u8 = 3;
 
+#[derive(Debug)]
 pub enum ConnectionError {
     ExceededHandshakeRetries(&'static str),
     Ssl(openssl::ssl::Error),
     TcpStream(std::io::Error)
-}
+} // TODO: this should impl error, display
 
 pub fn connect(host: IpAddr, port: u16) -> Result<SslStream<TcpStream>, ConnectionError> {
     let mut context: SslContext;
     match SslContext::new(SslMethod::Tlsv1) {
         Ok(val) => context = val,
-        Err(err) => return Err(ConnectionError::Ssl(openssl::ssl::Error::Ssl(err)))
+        Err(err) => return Err(ConnectionError::Ssl(openssl::ssl::Error::from(err)))
     }
     // TODO: Investigate this - Since we're given arbitrary hosts, up to user to verify?
     context.set_verify(openssl::ssl::SSL_VERIFY_NONE);
