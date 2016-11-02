@@ -2,6 +2,11 @@
 name = "mumble"
 version = "0.1.0"
 authors = ["Richard McCormack <brick@brick.codes>"]
+description = "Headless mumble client"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["mumble"]
+repository = "https://github.com/DenialAdams/mumble-rs"
 
 [dependencies]
 byteorder = "0.5.3"
