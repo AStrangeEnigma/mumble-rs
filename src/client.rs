@@ -34,17 +34,28 @@ pub enum ConnectionError {
     TcpStream(std::io::Error)
 } // TODO: this should impl error, display
 
-pub struct Connection {
+pub struct Client {
     control_channel: Mutex<SslStream<TcpStream>>
 }
 
-impl Connection {
-    fn new(host: IpAddr, port: u16, username: &str, password: &str) -> Result<Connection, ConnectionError> {
-        let control_channel = try!(Connection::connect(host, port));
-        let connection = Connection { control_channel: Mutex::new(control_channel) };
-        connection.version_exchange();
-        connection.authenticate(username, password);
-        Ok(connection)
+impl Client {
+    pub fn new(host: IpAddr, port: u16, username: &str, password: &str) -> Result<Arc<Client>, ConnectionError> {
+        let control_channel = try!(Client::connect(host, port));
+        let client = Arc::new(Client { control_channel: Mutex::new(control_channel) });
+        client.version_exchange();
+        client.authenticate(username, password);
+        let ping_client = Arc::downgrade(&client.clone());
+        thread::spawn(move || {
+            loop {
+                thread::sleep(time::Duration::from_secs(PING_INTERVAL));
+                let ping_client = ping_client.upgrade();
+                match ping_client {
+                    Some(client) => client.ping(),
+                    None => break
+                }
+            }
+        });
+        Ok(client)
     }
 
     fn connect(host: IpAddr, port: u16) -> Result<SslStream<TcpStream>, ConnectionError> {
@@ -135,25 +146,6 @@ impl Connection {
         // https://doc.rust-lang.org/std/sync/struct.Mutex.html#poisoning
         let mut channel = self.control_channel.lock().unwrap();
         channel.ssl_write(&*packet);
-    }
-}
-
-pub struct Client {
-    connection: Arc<Connection>
-}
-
-impl Client {
-    pub fn new(host: IpAddr, port: u16, username: &str, password: &str) -> Result<Client, ConnectionError> {
-        let connection = try!(Connection::new(host, port, username, password));
-        let arc_connection = Arc::new(connection);
-        let child_connection = arc_connection.clone();
-        thread::spawn(move || {
-            loop {
-                thread::sleep(time::Duration::from_secs(PING_INTERVAL));
-                child_connection.ping();
-            }
-        });
-        Ok(Client { connection: arc_connection})
     }
 }
 

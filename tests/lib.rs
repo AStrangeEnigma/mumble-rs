@@ -8,10 +8,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 #[test]
 fn test_all() {
     // Connect to a local murmur server
-    {
-        Client::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), mumble::DEFAULT_PORT, "mumble-rs", "nil").unwrap();
-    }
-    // Server should die here but can't because ping thread is still alive
+    let client = Client::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), mumble::DEFAULT_PORT, "mumble-rs", "nil").unwrap();
     loop {
         thread::sleep(time::Duration::from_secs(1));
     }
