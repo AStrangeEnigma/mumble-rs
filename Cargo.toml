@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Richard McCormack <brick@brick.codes>"]
 
 [dependencies]
+byteorder = "0.5.3"
 clippy = "*"
 openssl = "0.8.3"
 protobuf = "1.0.24"
