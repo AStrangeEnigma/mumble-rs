@@ -26,8 +26,9 @@ pub fn connect(host: IpAddr, port: u16) -> Result<SslStream<TcpStream>, Connecti
         Ok(val) => context = val,
         Err(err) => return Err(ConnectionError::Ssl(openssl::ssl::Error::from(err)))
     }
-    // TODO: Investigate this - Since we're given arbitrary hosts, up to user to verify?
+    // TODO: This will do no cert verification. We should have an option for this.
     context.set_verify(openssl::ssl::SSL_VERIFY_NONE);
+    //context.set_verify(openssl::ssl::SSL_VERIFY_PEER);
     let stream: TcpStream;
     match TcpStream::connect((host, port)) {
         Ok(val) => stream = val,
