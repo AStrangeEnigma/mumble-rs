@@ -5,7 +5,6 @@ use byteorder::{BigEndian, WriteBytesExt};
 use std;
 use std::net::{IpAddr, TcpStream};
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::channel;
 use std::{thread, time};
 
 use openssl;
@@ -28,34 +27,67 @@ const VERSION_PATCH: u8 = 0;
 const PING_INTERVAL: u64 = 5; // (in seconds)
 
 #[derive(Debug)]
+pub enum Error {
+    ConnectionError(ConnectionError),
+    SendError(SendError)
+} // TODO: this should impl error, display
+
+impl From<ConnectionError> for Error {
+    fn from(e: ConnectionError) -> Self {
+        Error::ConnectionError(e)
+    }
+}
+
+impl From<SendError> for Error {
+    fn from(e: SendError) -> Self {
+        Error::SendError(e)
+    }
+}
+
+#[derive(Debug)]
 pub enum ConnectionError {
     ExceededHandshakeRetries(&'static str),
     Ssl(openssl::ssl::Error),
     TcpStream(std::io::Error)
-} // TODO: this should impl error, display
+} // TODO: this should impl error, display, from
+
+#[derive(Debug)]
+pub enum SendError {
+    MessageTooLarge(&'static str),
+    Ssl(openssl::ssl::Error)
+} // TODO: this should impl error, display, from
 
 pub struct Client {
     control_channel: Mutex<SslStream<TcpStream>>
 }
 
+// TODO: auto reconnect on ZeroReturnError
+// for that, perhaps a different impl?
 impl Client {
-    pub fn new(host: IpAddr, port: u16, username: &str, password: &str) -> Result<Arc<Client>, ConnectionError> {
+    pub fn new(host: IpAddr, port: u16, username: &str, password: &str) -> Result<Arc<Client>, Error> {
         let control_channel = try!(Client::connect(host, port));
         let client = Arc::new(Client { control_channel: Mutex::new(control_channel) });
-        client.version_exchange();
-        client.authenticate(username, password);
+        try!(client.version_exchange());
+        try!(client.authenticate(username, password));
         let ping_client = Arc::downgrade(&client.clone());
         thread::spawn(move || {
-            loop {
+            while let Some(client) = ping_client.upgrade() {
                 thread::sleep(time::Duration::from_secs(PING_INTERVAL));
-                let ping_client = ping_client.upgrade();
-                match ping_client {
-                    Some(client) => client.ping(),
-                    None => break
-                }
+                // If ping fails, either everything is crashing and burning
+                // or it was just a one off issue. If it's crashing and burning the loop will end
+                // and if it's a one off issue re-pinging next iteration is desired anyway.
+                let _ = client.ping();
             }
         });
         Ok(client)
+    }
+
+    pub fn reconnect(&mut self, host: IpAddr, port: u16, username: &str, password: &str) -> Result<(), Error> {
+        let control_channel = try!(Client::connect(host, port));
+        self.control_channel = Mutex::new(control_channel);
+        try!(self.version_exchange());
+        try!(self.authenticate(username, password));
+        Ok(())
     }
 
     fn connect(host: IpAddr, port: u16) -> Result<SslStream<TcpStream>, ConnectionError> {
@@ -98,7 +130,7 @@ impl Client {
         }
     }
 
-    fn version_exchange(&self) {
+    fn version_exchange(&self) -> Result<(), SendError> {
         let major = (VERSION_MAJOR as u32) << 16;
         let minor = (VERSION_MINOR as u32) << 8;
         let patch = VERSION_PATCH as u32;
@@ -108,27 +140,27 @@ impl Client {
         // TODO: os and os version (some sort of cross platform uname needed)
         version_message.set_os(String::from("DenialAdams OS"));
         version_message.set_os_version(String::from("1.3.3.7"));
-        self.send_message(0, version_message);
+        self.send_message(0, version_message)
     }
 
     // TODO: authentication with tokens
-    fn authenticate(&self, username: &str, password: &str) {
+    fn authenticate(&self, username: &str, password: &str) -> Result<(), SendError> {
         let mut auth_message = proto::Authenticate::new();
         auth_message.set_username(String::from(username));
         auth_message.set_password(String::from(password));
         // TODO: register 0 celt versions
         auth_message.set_opus(true);
-        self.send_message(2, auth_message);
+        self.send_message(2, auth_message)
     }
 
-    fn ping(&self) {
-        let mut ping_message = proto::Ping::new();
+    fn ping(&self) -> Result<(), SendError> {
+        let ping_message = proto::Ping::new();
         // TODO: fill the ping with info
-        self.send_message(3, ping_message);
+        self.send_message(3, ping_message)
     }
 
     // TODO: error handling
-    fn send_message<M: protobuf::core::Message>(&self, id: u16, message: M) {
+    fn send_message<M: protobuf::core::Message>(&self, id: u16, message: M) -> Result<(), SendError> {
         let mut packet = vec![];
         // ID - what type of message are we sending
         packet.write_u16::<BigEndian>(id).unwrap();
@@ -145,7 +177,10 @@ impl Client {
         // Panic on poisoned mutex - this is desired.
         // https://doc.rust-lang.org/std/sync/struct.Mutex.html#poisoning
         let mut channel = self.control_channel.lock().unwrap();
-        channel.ssl_write(&*packet);
+        match channel.ssl_write(&*packet) {
+            Err(err) => Err(SendError::Ssl(err)),
+            Ok(_) => Ok(())
+        }
     }
 }
 
