@@ -31,8 +31,6 @@ pub struct Connection {
     control_channel: Mutex<SslStream<TcpStream>>
 }
 
-// TODO: auto reconnect on ZeroReturnError
-// for that, perhaps a different impl?
 impl Connection {
     pub fn new(host: IpAddr, port: u16, verify: bool, nodelay: bool) -> Result<Connection, ConnectionError> {
         let stream = try!(Connection::connect(host, port, verify, nodelay));
@@ -51,11 +49,13 @@ impl Connection {
             context.set_verify(openssl::ssl::SSL_VERIFY_NONE);
         }
         let stream: TcpStream;
-        stream.set_nodelay(nodelay);
         match TcpStream::connect((host, port)) {
             Ok(val) => stream = val,
             Err(err) => return Err(ConnectionError::TcpStream(err))
         }
+        // I don't know how this can fail, so just unwrapping for now...
+        // TODO: figure this out
+        stream.set_nodelay(nodelay).unwrap();
         match SslStream::connect(&context, stream) {
             Ok(val) => Ok(val),
             Err(err) => match err {
@@ -92,10 +92,10 @@ impl Connection {
     }
 
     // TODO: authentication with tokens
-    pub fn authenticate(&self, username: &str, password: &str) -> Result<(), SendError> {
+    pub fn authenticate(&self, username: String, password: String) -> Result<(), SendError> {
         let mut auth_message = proto::Authenticate::new();
-        auth_message.set_username(String::from(username));
-        auth_message.set_password(String::from(password));
+        auth_message.set_username(username);
+        auth_message.set_password(password);
         // TODO: register 0 celt versions
         auth_message.set_opus(true);
         self.send_message(2, auth_message)
@@ -113,7 +113,7 @@ impl Connection {
         packet.write_u16::<BigEndian>(id).unwrap();
         let payload = message.write_to_bytes().unwrap();
         if payload.len() as u64 > u32::max_value() as u64  {
-            return Err(SendError::MessageTooLarge("Payload too large in one packet!"))
+            return Err(SendError::MessageTooLarge("Payload too large to fit in one packet!"))
         }
         // The length of the payload
         packet.write_u32::<BigEndian>(payload.len() as u32).unwrap();

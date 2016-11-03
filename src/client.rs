@@ -6,8 +6,6 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::{thread, time};
 
-use openssl;
-
 // Version Exchange
 const VERSION_RELEASE_PREFIX: &'static str = "mumble-rs";
 const VERSION_RELEASE: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
@@ -24,12 +22,11 @@ pub struct Client {
     options: ClientOptions
 }
 
+// TODO: use force TCP option
 impl Client {
-    pub fn new(host: IpAddr, port: u16, username: &str, password: &str) -> Result<Client, error::Error> {
-        let connection = try!(Connection::new(host, port, false, false));
-        let mut client = Client { connection: Arc::new(connection) };
-        try!(client.auto_reconnect(&Client::version_exchange));
-        try!(client.connection.authenticate(username, password));
+    pub fn new(options: ClientOptions) -> Result<Client, error::Error> {
+        let connection = try!(Client::establish_connection(options.host, options.port, options.username.clone(), options.password.clone(), options.validate_host_cert, options.tcp_nodelay));
+        let client = Client { connection: Arc::new(connection), options: options };
         // Set up ping thread
         {
             let ping_connection = Arc::downgrade(&client.connection.clone());
@@ -44,6 +41,25 @@ impl Client {
             });
         }
         Ok(client)
+    }
+
+    fn establish_connection(host: IpAddr, port: u16, username: String, password: String, validate: bool, tcp_nodelay: bool) -> Result<Connection, error::Error> {
+        let connection = try!(Connection::new(host, port, validate, tcp_nodelay));
+        //try!(client.auto_reconnect(&Client::version_exchange));
+        try!(Client::version_exchange(&connection));
+        try!(connection.authenticate(username, password));
+        Ok(connection)
+    }
+
+    fn version_exchange(connection: &Connection) -> Result<(), SendError> {
+        let major = (VERSION_MAJOR as u32) << 16;
+        let minor = (VERSION_MINOR as u32) << 8;
+        let patch = VERSION_PATCH as u32;
+        // TODO: os and os version (some sort of cross platform uname needed)
+        connection.version_exchange(major | minor | patch,
+                              format!("{} {}", VERSION_RELEASE_PREFIX, VERSION_RELEASE.unwrap_or("Unknown")),
+                              String::from("DenialAdams OS"),
+                              String::from("1.3.3.7"))
     }
 
     // TODO WIP
@@ -72,23 +88,4 @@ impl Client {
         // TODO TEMP
         Err(SendError::MessageTooLarge("aaah"))
     } */
-
-    fn reconnect(&mut self, host: IpAddr, port: u16, username: &str, password: &str) -> Result<(), error::Error> {
-        let connection = try!(Connection::new(host, port, false, false));
-        self.connection = Arc::new(connection);
-        try!(self.version_exchange());
-        try!(self.connection.authenticate(username, password));
-        Ok(())
-    }
-
-    fn version_exchange(&self) -> Result<(), SendError> {
-        let major = (VERSION_MAJOR as u32) << 16;
-        let minor = (VERSION_MINOR as u32) << 8;
-        let patch = VERSION_PATCH as u32;
-        // TODO: os and os version (some sort of cross platform uname needed)
-        self.connection.version_exchange(major | minor | patch,
-                              format!("{} {}", VERSION_RELEASE_PREFIX, VERSION_RELEASE.unwrap_or("Unknown")),
-                              String::from("DenialAdams OS"),
-                              String::from("1.3.3.7"))
-    }
 }
