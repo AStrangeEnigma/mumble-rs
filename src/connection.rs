@@ -19,13 +19,31 @@ pub enum ConnectionError {
     ExceededHandshakeRetries(&'static str),
     Ssl(openssl::ssl::Error),
     TcpStream(std::io::Error)
-} // TODO: this should impl error, display, from
+} // TODO: this should impl error, display
+
+impl From<openssl::ssl::Error> for ConnectionError {
+    fn from(e: openssl::ssl::Error) -> Self {
+        SendError::Ssl(e)
+    }
+}
+
+impl From<std::io::Error> for ConnectionError {
+    fn from(e: std::io::Error) -> Self {
+        SendError::TcpStream(e)
+    }
+}
 
 #[derive(Debug)]
 pub enum SendError {
     MessageTooLarge(&'static str),
     Ssl(openssl::ssl::Error)
-} // TODO: this should impl error, display, from
+} // TODO: this should impl error, display
+
+impl From<openssl::ssl::Error> for SendError {
+    fn from(e: openssl::ssl::Error) -> Self {
+        SendError::Ssl(e)
+    }
+}
 
 pub struct Connection {
     control_channel: Mutex<SslStream<TcpStream>>
