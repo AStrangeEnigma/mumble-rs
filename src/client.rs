@@ -64,6 +64,8 @@ impl Client {
         Ok(connection)
     }
 
+    // Version exchange with our client version (matching mumble client latest)
+    // as well as mumble-rs release info
     fn version_exchange(connection: &Connection) -> Result<usize, SendError> {
         let major = (VERSION_MAJOR as u32) << 16;
         let minor = (VERSION_MINOR as u32) << 8;
