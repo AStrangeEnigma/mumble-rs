@@ -40,6 +40,19 @@ impl Client {
                 }
             });
         }
+        // Read thread
+        {
+            let read_connection = Arc::downgrade(&client.connection.clone());
+            thread::spawn(move || {
+                while let Some(connection) = read_connection.upgrade() {
+                    thread::sleep(time::Duration::from_secs(PING_INTERVAL));
+                    // If ping fails, either everything is crashing and burning
+                    // or it was just a one off issue. If it's crashing and burning the loop will end
+                    // and if it's a temporary re-pinging next iteration is desired anyway.
+                    let _ = connection.ping();
+                }
+            });
+        }
         Ok(client)
     }
 
@@ -51,7 +64,7 @@ impl Client {
         Ok(connection)
     }
 
-    fn version_exchange(connection: &Connection) -> Result<(), SendError> {
+    fn version_exchange(connection: &Connection) -> Result<usize, SendError> {
         let major = (VERSION_MAJOR as u32) << 16;
         let minor = (VERSION_MINOR as u32) << 8;
         let patch = VERSION_PATCH as u32;

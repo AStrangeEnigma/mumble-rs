@@ -82,7 +82,7 @@ impl Connection {
         }
     }
 
-    pub fn version_exchange(&self, version: u32, release: String, os: String, os_version: String) -> Result<(), SendError> {
+    pub fn version_exchange(&self, version: u32, release: String, os: String, os_version: String) -> Result<usize, SendError> {
         let mut version_message = proto::Version::new();
         version_message.set_version(version);
         version_message.set_release(release);
@@ -92,7 +92,7 @@ impl Connection {
     }
 
     // TODO: authentication with tokens
-    pub fn authenticate(&self, username: String, password: String) -> Result<(), SendError> {
+    pub fn authenticate(&self, username: String, password: String) -> Result<usize, SendError> {
         let mut auth_message = proto::Authenticate::new();
         auth_message.set_username(username);
         auth_message.set_password(password);
@@ -101,13 +101,13 @@ impl Connection {
         self.send_message(2, auth_message)
     }
 
-    pub fn ping(&self) -> Result<(), SendError> {
+    pub fn ping(&self) -> Result<usize, SendError> {
         let ping_message = proto::Ping::new();
         // TODO: fill the ping with info
         self.send_message(3, ping_message)
     }
 
-    fn send_message<M: protobuf::core::Message>(&self, id: u16, message: M) -> Result<(), SendError> {
+    fn send_message<M: protobuf::core::Message>(&self, id: u16, message: M) -> Result<usize, SendError> {
         let mut packet = vec![];
         // ID - what type of message are we sending
         packet.write_u16::<BigEndian>(id).unwrap();
@@ -124,8 +124,11 @@ impl Connection {
         let mut channel = self.control_channel.lock().unwrap();
         match channel.ssl_write(&*packet) {
             Err(err) => Err(SendError::Ssl(err)),
-            Ok(_) => Ok(())
+            Ok(val) => Ok(val)
         }
+    }
+
+    fn read_message(&self) -> Result<protobuf::core::Message, ReadError> {
     }
 }
 
