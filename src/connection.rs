@@ -23,13 +23,19 @@ pub enum ConnectionError {
 
 impl From<openssl::ssl::Error> for ConnectionError {
     fn from(e: openssl::ssl::Error) -> Self {
-        SendError::Ssl(e)
+        ConnectionError::Ssl(e)
+    }
+}
+
+impl From<openssl::error::ErrorStack> for ConnectionError {
+    fn from(e: openssl::error::ErrorStack) -> Self {
+        ConnectionError::Ssl(openssl::ssl::Error::from(e))
     }
 }
 
 impl From<std::io::Error> for ConnectionError {
     fn from(e: std::io::Error) -> Self {
-        SendError::TcpStream(e)
+        ConnectionError::TcpStream(e)
     }
 }
 
@@ -56,21 +62,13 @@ impl Connection {
     }
 
     fn connect(host: IpAddr, port: u16, verify: bool, nodelay: bool) -> Result<SslStream<TcpStream>, ConnectionError> {
-        let mut context: SslContext;
-        match SslContext::new(SslMethod::Tlsv1) {
-            Ok(val) => context = val,
-            Err(err) => return Err(ConnectionError::Ssl(openssl::ssl::Error::from(err)))
-        }
+        let mut context = try!(SslContext::new(SslMethod::Tlsv1));
         if verify {
             context.set_verify(openssl::ssl::SSL_VERIFY_PEER);
         } else {
             context.set_verify(openssl::ssl::SSL_VERIFY_NONE);
         }
-        let stream: TcpStream;
-        match TcpStream::connect((host, port)) {
-            Ok(val) => stream = val,
-            Err(err) => return Err(ConnectionError::TcpStream(err))
-        }
+        let stream = try!(TcpStream::connect((host, port)));
         // I don't know how this can fail, so just unwrapping for now...
         // TODO: figure this out
         stream.set_nodelay(nodelay).unwrap();
@@ -146,8 +144,8 @@ impl Connection {
         }
     }
 
-    fn read_message(&self) -> Result<protobuf::core::Message, ReadError> {
-    }
+    //fn read_message(&self) -> Result<protobuf::core::Message, ReadError> {
+    //}
 }
 
 
