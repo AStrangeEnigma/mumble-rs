@@ -3,13 +3,15 @@ use proto;
 use byteorder::{BigEndian, WriteBytesExt};
 
 use std;
+use std::io::Write;
 use std::net::{IpAddr, TcpStream};
-use std::sync::Mutex;
-
-use openssl;
-use openssl::ssl::{HandshakeError, SslContext, SslMethod, SslStream};
+use std::sync::{Arc, Mutex};
 
 use protobuf;
+
+use rustls;
+use rustls::Session;
+use webpki_roots;
 
 // Connect
 const SSL_HANDSHAKE_RETRIES: u8 = 3;
@@ -17,21 +19,8 @@ const SSL_HANDSHAKE_RETRIES: u8 = 3;
 #[derive(Debug)]
 pub enum ConnectionError {
     ExceededHandshakeRetries(&'static str),
-    Ssl(openssl::ssl::Error),
     TcpStream(std::io::Error)
 } // TODO: this should impl error, display
-
-impl From<openssl::ssl::Error> for ConnectionError {
-    fn from(e: openssl::ssl::Error) -> Self {
-        ConnectionError::Ssl(e)
-    }
-}
-
-impl From<openssl::error::ErrorStack> for ConnectionError {
-    fn from(e: openssl::error::ErrorStack) -> Self {
-        ConnectionError::Ssl(openssl::ssl::Error::from(e))
-    }
-}
 
 impl From<std::io::Error> for ConnectionError {
     fn from(e: std::io::Error) -> Self {
@@ -42,63 +31,34 @@ impl From<std::io::Error> for ConnectionError {
 #[derive(Debug)]
 pub enum SendError {
     MessageTooLarge(&'static str),
-    Ssl(openssl::ssl::Error)
 } // TODO: this should impl error, display
 
-impl From<openssl::ssl::Error> for SendError {
-    fn from(e: openssl::ssl::Error) -> Self {
-        SendError::Ssl(e)
-    }
-}
-
 pub struct Connection {
-    control_channel: Mutex<SslStream<TcpStream>>
+    control_channel: TcpStream,
+    tls_session: rustls::ClientSession
 }
 
 impl Connection {
-    pub fn new(host: IpAddr, port: u16, verify: bool, nodelay: bool) -> Result<Connection, ConnectionError> {
+    /*
+    pub fn new(host: IpAddr, port: u16, nodelay: bool) -> Result<Connection, ConnectionError> {
         let stream = try!(Connection::connect(host, port, verify, nodelay));
         Ok(Connection { control_channel: Mutex::new(stream) })
-    }
+    }*/
 
-    fn connect(host: IpAddr, port: u16, verify: bool, nodelay: bool) -> Result<SslStream<TcpStream>, ConnectionError> {
-        let mut context = try!(SslContext::new(SslMethod::Tlsv1));
-        if verify {
-            context.set_verify(openssl::ssl::SSL_VERIFY_PEER);
-        } else {
-            context.set_verify(openssl::ssl::SSL_VERIFY_NONE);
-        }
+    pub fn connect(host: IpAddr, port: u16, nodelay: bool) -> Result<Connection, ConnectionError> {
         let stream = try!(TcpStream::connect((host, port)));
         // I don't know how this can fail, so just unwrapping for now...
         // TODO: figure this out
         stream.set_nodelay(nodelay).unwrap();
-        match SslStream::connect(&context, stream) {
-            Ok(val) => Ok(val),
-            Err(err) => match err {
-                HandshakeError::Failure(handshake_err) => Err(ConnectionError::Ssl(handshake_err)),
-                HandshakeError::Interrupted(interrupted_stream) => {
-                    let mut ssl_stream = interrupted_stream;
-                    let mut tries: u8 = 1;
-                    while tries < SSL_HANDSHAKE_RETRIES {
-                        match ssl_stream.handshake() {
-                            Ok(val) => return Ok(val),
-                            Err(err) => match err {
-                                HandshakeError::Failure(handshake_err) => return Err(ConnectionError::Ssl(handshake_err)),
-                                HandshakeError::Interrupted(new_interrupted_stream) => {
-                                    ssl_stream = new_interrupted_stream;
-                                    tries += 1;
-                                    continue
-                                }
-                            }
-                        }
-                    }
-                    Err(ConnectionError::ExceededHandshakeRetries("Exceeded number of handshake retries"))
-                }
-            }
-        }
+        let mut config = rustls::ClientConfig::new();
+        config.root_store.add_trust_anchors(&webpki_roots::ROOTS);
+        let rc_config = Arc::new(config);
+        // TODO constant
+        let mut client = rustls::ClientSession::new(&rc_config, "brick.codes");
+        Ok(Connection { control_channel: stream, tls_session: client })
     }
 
-    pub fn version_exchange(&self, version: u32, release: String, os: String, os_version: String) -> Result<usize, SendError> {
+    pub fn version_exchange(&mut self, version: u32, release: String, os: String, os_version: String) -> Result<(), SendError> {
         let mut version_message = proto::Version::new();
         version_message.set_version(version);
         version_message.set_release(release);
@@ -108,7 +68,7 @@ impl Connection {
     }
 
     // TODO: authentication with tokens
-    pub fn authenticate(&self, username: String, password: String) -> Result<usize, SendError> {
+    pub fn authenticate(&mut self, username: String, password: String) -> Result<(), SendError> {
         let mut auth_message = proto::Authenticate::new();
         auth_message.set_username(username);
         auth_message.set_password(password);
@@ -117,13 +77,13 @@ impl Connection {
         self.send_message(2, auth_message)
     }
 
-    pub fn ping(&self) -> Result<usize, SendError> {
+    pub fn ping(&mut self) -> Result<(), SendError> {
         let ping_message = proto::Ping::new();
         // TODO: fill the ping with info
         self.send_message(3, ping_message)
     }
 
-    fn send_message<M: protobuf::core::Message>(&self, id: u16, message: M) -> Result<usize, SendError> {
+    fn send_message<M: protobuf::core::Message>(&mut self, id: u16, message: M) -> Result<(), SendError> {
         let mut packet = vec![];
         // ID - what type of message are we sending
         packet.write_u16::<BigEndian>(id).unwrap();
@@ -137,11 +97,13 @@ impl Connection {
         packet.extend(payload);
         // Panic on poisoned mutex - this is desired (because could only be poisoned from panic)
         // https://doc.rust-lang.org/std/sync/struct.Mutex.html#poisoning
-        let mut channel = self.control_channel.lock().unwrap();
-        match channel.ssl_write(&*packet) {
-            Err(err) => Err(SendError::Ssl(err)),
-            Ok(val) => Ok(val)
-        }
+        self.tls_session.write(&*packet).unwrap();
+        self.tls_session.write_tls(&mut self.control_channel).unwrap();
+        Ok(())
+    }
+
+    pub fn break_pls(&mut self) {
+        self.tls_session.process_new_packets().unwrap();
     }
 
     //fn read_message(&self) -> Result<protobuf::core::Message, ReadError> {

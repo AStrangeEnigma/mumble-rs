@@ -18,55 +18,29 @@ const VERSION_PATCH: u8 = 0;
 const PING_INTERVAL: u64 = 5; // (in seconds)
 
 pub struct Client {
-    connection: Arc<Connection>,
+    connection: Connection,
     options: ClientOptions
 }
 
 // TODO: use force TCP option
 impl Client {
     pub fn new(options: ClientOptions) -> Result<Client, error::Error> {
-        let connection = try!(Client::establish_connection(options.host, options.port, options.username.clone(), options.password.clone(), options.validate_host_cert, options.tcp_nodelay));
-        let client = Client { connection: Arc::new(connection), options: options };
-        // Set up ping thread
-        {
-            let ping_connection = Arc::downgrade(&client.connection.clone());
-            thread::spawn(move || {
-                while let Some(connection) = ping_connection.upgrade() {
-                    thread::sleep(time::Duration::from_secs(PING_INTERVAL));
-                    // If ping fails, either everything is crashing and burning
-                    // or it was just a one off issue. If it's crashing and burning the loop will end
-                    // and if it's a temporary re-pinging next iteration is desired anyway.
-                    let _ = connection.ping();
-                }
-            });
-        }
-        // Read thread
-        {
-            let read_connection = Arc::downgrade(&client.connection.clone());
-            thread::spawn(move || {
-                while let Some(connection) = read_connection.upgrade() {
-                    thread::sleep(time::Duration::from_secs(PING_INTERVAL));
-                    // If ping fails, either everything is crashing and burning
-                    // or it was just a one off issue. If it's crashing and burning the loop will end
-                    // and if it's a temporary re-pinging next iteration is desired anyway.
-                    let _ = connection.ping();
-                }
-            });
-        }
+        let mut connection = try!(Client::establish_connection(options.host, options.port, options.username.clone(), options.password.clone(), options.tcp_nodelay));
+        let mut client = Client { connection: connection, options: options };
         Ok(client)
     }
 
-    fn establish_connection(host: IpAddr, port: u16, username: String, password: String, validate: bool, tcp_nodelay: bool) -> Result<Connection, error::Error> {
-        let connection = try!(Connection::new(host, port, validate, tcp_nodelay));
+    fn establish_connection(host: IpAddr, port: u16, username: String, password: String, tcp_nodelay: bool) -> Result<Connection, error::Error> {
+        let mut connection = try!(Connection::connect(host, port, tcp_nodelay));
         //try!(client.auto_reconnect(&Client::version_exchange));
-        try!(Client::version_exchange(&connection));
+        try!(Client::version_exchange(&mut connection));
         try!(connection.authenticate(username, password));
         Ok(connection)
     }
 
     // Version exchange with our client version (matching mumble client latest)
     // as well as mumble-rs release info
-    fn version_exchange(connection: &Connection) -> Result<usize, SendError> {
+    fn version_exchange(connection: &mut Connection) -> Result<(), SendError> {
         let major = (VERSION_MAJOR as u32) << 16;
         let minor = (VERSION_MINOR as u32) << 8;
         let patch = VERSION_PATCH as u32;
@@ -75,6 +49,10 @@ impl Client {
                               format!("{} {}", VERSION_RELEASE_PREFIX, VERSION_RELEASE.unwrap_or("Unknown")),
                               String::from("DenialAdams OS"),
                               String::from("1.3.3.7"))
+    }
+
+    pub fn break_pls(&mut self) {
+        self.connection.break_pls();
     }
 
     // TODO WIP

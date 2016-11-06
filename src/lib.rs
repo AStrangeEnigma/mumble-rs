@@ -3,8 +3,9 @@
 #![plugin(clippy)]
 
 extern crate byteorder;
-extern crate openssl;
-extern crate protobuf; // depend on rust-protobuf runtime
+extern crate protobuf;
+extern crate rustls;
+extern crate webpki_roots;
 
 pub mod client;
 pub mod options;
