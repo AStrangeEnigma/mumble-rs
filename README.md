@@ -1,3 +1,7 @@
+NOTE:
+
+I'm not working on this anymore. I think the right way to do this is with Tokio. If someone more talented than me doesn't do it before then, I'll take another crack at it some point.
+
 # mumble-rs
 Headless mumble client written in Rust. VERY, VERY WIP.
 
